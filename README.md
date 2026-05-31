@@ -61,3 +61,5 @@ As a result, financial institutions must balance predictive power with transpare
 4. World Bank. *Credit Scoring Approaches Guidelines*.
 5. Siddiqi, N. *Credit Risk Scorecards: Developing and Implementing Intelligent Credit Scoring*.
 6. Corporate Finance Institute (CFI). *Credit Risk*.
+
+[View EDA Notebook (External Link)](https://nbviewer.org/github/bethelhemf/credit_risk_analysis/blob/main/notebooks/eda.ipynb)
