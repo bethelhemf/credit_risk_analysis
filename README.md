@@ -63,3 +63,12 @@ As a result, financial institutions must balance predictive power with transpare
 6. Corporate Finance Institute (CFI). *Credit Risk*.
 
 [View EDA Notebook (External Link)](https://nbviewer.org/github/bethelhemf/credit_risk_analysis/blob/main/notebooks/eda.ipynb)
+## Task 2: Exploratory Data Analysis Results
+
+The full EDA can be viewed here: [Online Notebook Viewer (Recommended)](https://nbviewer.org/github/bethelhemf/credit_risk_analysis/blob/main/notebooks/eda.ipynb)
+
+### Key Insights:
+1. **Monetary Skewness:** Transactions have extreme outliers ().
+2. **Risk Correlation:** Transaction Value has a 0.57 correlation with FraudResult.
+3. **Category Dominance:** Financial Services and Airtime are the primary transaction types.
+
