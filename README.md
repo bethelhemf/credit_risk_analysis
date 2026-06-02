@@ -8,6 +8,11 @@ Interpretable models such as Logistic Regression with Weight of Evidence (WoE) t
 
 From a Basel II perspective, model explainability is critical because lending decisions directly affect capital allocation, risk management practices, and regulatory reporting. A highly accurate model that cannot be adequately explained may create compliance and governance challenges.
 
+## Data Source and Provenance
+- **Source:** The dataset is provided by the [Xente Challenge on Kaggle](https://www.kaggle.com/datasets/...). It contains transaction-level records from a Ugandan eCommerce platform.
+- **Provenance:** Raw data is stored in `data/raw/`. The pipeline cleanses these records, calculates RFM metrics, and engineers proxy labels for credit risk based on behavioral patterns.
+- **Privacy:** All `AccountId` and `CustomerId` fields are treated as anonymized identifiers.
+
 ## 2. Why a Proxy Variable Is Necessary and the Risks It Introduces
 
 Credit scoring models are typically supervised learning models that require a target variable indicating whether a borrower has defaulted. However, many datasets do not contain a direct "default" label. In such situations, a proxy variable must be created to represent default-like behavior.
