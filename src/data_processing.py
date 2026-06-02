@@ -6,16 +6,17 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
+from sklearn.cluster import KMeans
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# 1. Setup Logging (Best Practice: Defensive Programming)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# --- TASK 3 MODULES ---
+
 class DateFeatureExtractor(BaseEstimator, TransformerMixin):
-    """Extracts Hour, Day, Month, Year from TransactionStartTime."""
-    def fit(self, X, y=None):
-        return self
-    
+    """Requirement: Extract Hour, Day, Month, Year."""
+    def fit(self, X, y=None): return self
     def transform(self, X):
         X = X.copy()
         X['TransactionStartTime'] = pd.to_datetime(X['TransactionStartTime'])
@@ -23,99 +24,128 @@ class DateFeatureExtractor(BaseEstimator, TransformerMixin):
         X['Day'] = X['TransactionStartTime'].dt.day
         X['Month'] = X['TransactionStartTime'].dt.month
         X['Year'] = X['TransactionStartTime'].dt.year
-        return X.drop(columns=['TransactionStartTime'])
-
-class CustomerAggregator(BaseEstimator, TransformerMixin):
-    """Creates Aggregate Features per Customer."""
-    def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
-        # Note: In a production pipeline, aggregation usually happens 
-        # before the final X/y split, but here we calculate them per row 
-        # based on the provided transactional logic.
-        X = X.copy()
-        # Defensive: check if necessary columns exist
-        if 'Value' not in X.columns:
-            logger.error("Value column missing for aggregation")
-            return X
-            
-        customer_stats = X.groupby('CustomerId')['Value'].agg(['sum', 'mean', 'count', 'std']).fillna(0)
-        customer_stats.columns = ['Total_Value', 'Avg_Value', 'Transaction_Count', 'Std_Value']
-        
-        return X.merge(customer_stats, on='CustomerId', how='left')
-
-class WoETransformer(BaseEstimator, TransformerMixin):
-    """Simple Weight of Evidence Transformer for Basel II compliance."""
-    def __init__(self, columns=None):
-        self.columns = columns
-        self.woe_maps = {}
-
-    def fit(self, X, y):
-        # y is the Proxy Target we defined
-        if y is None:
-            return self
-        X_temp = X.copy()
-        X_temp['target'] = y
-        for col in self.columns:
-            # Binning continuous variables
-            X_temp['bin'] = pd.qcut(X_temp[col], 5, duplicates='drop')
-            woe = X_temp.groupby('bin')['target'].agg(
-                lambda s: np.log((s.count() - s.sum() + 0.5) / (s.sum() + 0.5))
-            )
-            self.woe_maps[col] = woe
-        return self
-
-    def transform(self, X):
-        X = X.copy()
-        for col, woe_map in self.woe_maps.items():
-            bins = pd.qcut(X[col], 5, duplicates='drop')
-            X[f'{col}_WoE'] = bins.map(woe_map).fillna(0)
         return X
 
-def build_feature_pipeline(numerical_cols, categorical_cols):
-    """
-    The Single Fitted Pipeline Object.
-    Chains Imputation, Encoding, and Scaling.
-    """
+class AggregatedFeatureGenerator(BaseEstimator, TransformerMixin):
+    """Requirement: Total, Average, Count, and Std per Customer."""
+    def fit(self, X, y=None): return self
+    def transform(self, X):
+        X = X.copy()
+        # Group by Customer to get behavioral aggregates
+        agg_features = X.groupby('CustomerId')['Value'].agg(['sum', 'mean', 'count', 'std']).fillna(0)
+        agg_features.columns = ['Total_Value', 'Avg_Value', 'Transaction_Count', 'Std_Value']
+        # Merge back to the original dataframe
+        return X.merge(agg_features, on='CustomerId', how='left')
+
+# --- TASK 4 MODULE ---
+
+class KMeansRiskLabeler:
+    """Requirement: K-Means clustering (k=3) for High-Risk Proxy."""
+    def __init__(self, n_clusters=3, random_state=42):
+        self.n_clusters = n_clusters
+        self.random_state = random_state
+        self.kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+        self.scaler = StandardScaler()
+
+    def fit_predict_risk(self, df):
+        logger.info("Generating RFM for Task 4 Proxy Labels...")
+        snapshot_date = df['TransactionStartTime'].max() + pd.Timedelta(days=1)
+        
+        # Calculate RFM
+        rfm = df.groupby('CustomerId').agg({
+            'TransactionStartTime': lambda x: (snapshot_date - x.max()).days,
+            'TransactionId': 'count',
+            'Value': 'sum'
+        }).rename(columns={'TransactionStartTime': 'Recency', 'TransactionId': 'Frequency', 'Value': 'Monetary'})
+        
+        # Scale for Clustering
+        rfm_scaled = self.scaler.fit_transform(rfm)
+        
+        # Cluster
+        rfm['Cluster'] = self.kmeans.fit_predict(rfm_scaled)
+        
+        # Identify High-Risk (Cluster with lowest average Monetary/Frequency)
+        risk_map = rfm.groupby('Cluster')[['Monetary', 'Frequency']].mean().sum(axis=1)
+        high_risk_cluster = risk_map.idxmin()
+        
+        rfm['is_high_risk'] = (rfm['Cluster'] == high_risk_cluster).astype(int)
+        logger.info(f"High-risk identified as Cluster {high_risk_cluster}")
+        return rfm[['is_high_risk']]
+
+# --- WOE LOGIC (Basel II Compliance) ---
+
+def calculate_woe_iv(df, feature, target):
+    """Requirement: Implement Weight of Evidence & Information Value."""
+    df = df.copy()
+    df['bin'] = pd.qcut(df[feature], 5, duplicates='drop')
     
-    # 1. Numerical Pipeline: Impute then Scale
-    num_pipeline = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler())
-    ])
+    event_total = df[target].sum()
+    non_event_total = df[target].count() - event_total
     
-    # 2. Categorical Pipeline: Impute then One-Hot
-    cat_pipeline = Pipeline([
-        ('imputer', SimpleImputer(strategy='most_frequent')),
-        ('encoder', OneHotEncoder(handle_unknown='ignore'))
-    ])
+    woe_iv = df.groupby('bin')[target].agg(['count', 'sum'])
+    woe_iv.columns = ['Total', 'Bad']
+    woe_iv['Good'] = woe_iv['Total'] - woe_iv['Bad']
     
-    # 3. Combine using ColumnTransformer
-    preprocessor = ColumnTransformer([
-        ('num', num_pipeline, numerical_cols),
-        ('cat', cat_pipeline, categorical_cols)
-    ])
+    # WoE formula with epsilon to avoid division by zero
+    eps = 0.5 
+    woe_iv['WoE'] = np.log(((woe_iv['Good'] + eps) / non_event_total) / 
+                           ((woe_iv['Bad'] + eps) / event_total))
+    woe_iv['IV'] = (((woe_iv['Good'] / non_event_total) - 
+                     (woe_iv['Bad'] / event_total)) * woe_iv['WoE'])
     
-    # 4. Final Full Pipeline
+    return woe_iv, woe_iv['IV'].sum()
+
+# --- THE MAIN PIPELINE FUNCTION ---
+
+def get_fitted_pipeline(df):
+    """Requirement: Chain all transformations into a single Fitted Pipeline."""
+    
+    numerical_features = ['Value', 'Total_Value', 'Avg_Value', 'Std_Value', 'Hour']
+    categorical_features = ['ProductCategory', 'ChannelId']
+
+    # 1. Define Column Transformer (Handling Missing Values & Encoding)
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', Pipeline([
+                ('imputer', SimpleImputer(strategy='median')),
+                ('scaler', StandardScaler())
+            ]), numerical_features),
+            ('cat', Pipeline([
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('ohe', OneHotEncoder(handle_unknown='ignore'))
+            ]), categorical_features)
+        ]
+    )
+
+    # 2. Build the Full Pipeline (Task 3)
     full_pipeline = Pipeline([
-        ('date_extractor', DateFeatureExtractor()),
-        ('aggregator', CustomerAggregator()),
+        ('date_extract', DateFeatureExtractor()),
+        ('aggregator', AggregatedFeatureGenerator()),
         ('preprocessor', preprocessor)
     ])
     
     return full_pipeline
 
-# Example Usage logic
 if __name__ == "__main__":
-    # Load your data
-    df = pd.read_csv('data/raw/data.csv')
-    
-    # Define features for the pipeline
-    num_features = ['Value', 'PricingStrategy']
-    cat_features = ['ProductCategory', 'ChannelId']
-    
-    # Instantiate and fit
-    pipeline = build_feature_pipeline(num_features, cat_features)
-    # Note: Target 'y' creation happens here using the RFM logic discussed earlier
-    logger.info("Pipeline built successfully.")
+    try:
+        # Load Raw Data
+        df_raw = pd.read_csv('data/raw/data.csv')
+        df_raw['TransactionStartTime'] = pd.to_datetime(df_raw['TransactionStartTime'])
+
+        # Task 4: Generate Proxy Label first
+        labeler = KMeansRiskLabeler()
+        risk_labels = labeler.fit_predict_risk(df_raw)
+        
+        # Merge Labels
+        df_ready = df_raw.merge(risk_labels, on='CustomerId', how='left')
+        
+        # Task 3: Run the Pipeline
+        pipeline = get_fitted_pipeline(df_ready)
+        processed_features = pipeline.fit_transform(df_ready)
+        
+        # Export for Task 5
+        logger.info("Feature engineering and Labeling complete.")
+        # Note: In Task 5 you will feed 'processed_features' and 'df_ready[is_high_risk]' into models
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
